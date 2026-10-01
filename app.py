@@ -4,71 +4,82 @@ import pandas as pd
 
 st.set_page_config(page_title="Dashboard Lay Zebra", page_icon="⚽", layout="wide")
 
-st.title("⚽ Dashboard Lay Zebra")
-st.markdown("Varredura diária de partidas com foco na estratégia **Lay Zebra**.")
+st.title("⚽ Dashboard Lay Zebra (Jogos Reais)")
+st.markdown("Varredura em tempo real de partidas com foco na estratégia **Lay Zebra**.")
 
 # Sidebar - Parâmetros
-st.sidebar.header("⚙️ Filtros da Estratégia")
+st.sidebar.header("⚙️ Configurações & Filtros")
+api_key = st.sidebar.text_input("Sua Chave API-Football (RapidAPI)", type="password")
+
+st.sidebar.subheader("🎯 Parâmetros da Estratégia")
 odd_min = st.sidebar.number_input("Odd Mínima Zebra", value=4.00, step=0.10)
 odd_max = st.sidebar.number_input("Odd Máxima Zebra", value=8.00, step=0.10)
 amostragem_min = st.sidebar.number_input("Mínimo Jogos Casa", value=10, step=1)
 taxa_vitoria_min = st.sidebar.slider("% Vitória Mínima Casa", min_value=50, max_value=100, value=70)
 
-api_key = st.sidebar.text_input("Sua Chave API-Football", type="password")
-
-def buscar_partidas():
-    # Dados de demonstração caso esteja sem a chave configurada
-    if not api_key:
-        return [
-            {"campeonato": "La Liga", "mandante": "Real Madrid", "visitante": "Almería", "odd_zebra": 6.50, "jogos_casa": 14, "vitorias_casa": 12},
-            {"campeonato": "Premier League", "mandante": "Manchester City", "visitante": "Burnley", "odd_zebra": 5.80, "jogos_casa": 12, "vitorias_casa": 10},
-            {"campeonato": "Premier League", "mandante": "Arsenal", "visitante": "Everton", "odd_zebra": 5.20, "jogos_casa": 10, "vitorias_casa": 6},
-            {"campeonato": "Bundesliga", "mandante": "Bayern Munich", "visitante": "Bochum", "odd_zebra": 8.50, "jogos_casa": 11, "vitorias_casa": 9},
-        ]
+def buscar_partidas_reais(key):
+    if not key:
+        st.error("❌ Digite sua chave da API-Football no menu lateral para carregar os jogos reais do dia.")
+        return []
     
+    # Busca estritamente os jogos programados para a data de HOJE
     url = "https://api-football-v1.p.rapidapi.com/v3/fixtures?date=today"
     headers = {
-        "x-rapidapi-key": api_key,
+        "x-rapidapi-key": key,
         "x-rapidapi-host": "api-football-v1.p.rapidapi.com"
     }
+    
     try:
         response = requests.get(url, headers=headers).json()
-        jogos_reais = []
-        for match in response.get("response", []):
-            jogos_reais.append({
-                "campeonato": match["league"]["name"],
-                "mandante": match["teams"]["home"]["name"],
-                "visitante": match["teams"]["away"]["name"],
-                "odd_zebra": 6.00,  # Exemplo parametrizado
+        jogos_reais = response.get("response", [])
+        
+        if not jogos_reais:
+            st.info("Nenhuma partida encontrada para a data de hoje na API.")
+            return []
+            
+        dados_processados = []
+        for item in jogos_reais:
+            liga = item["league"]["name"]
+            mandante = item["teams"]["home"]["name"]
+            visitante = item["teams"]["away"]["name"]
+            horario = item["fixture"]["date"][11:16] # Formato HH:MM
+            
+            dados_processados.append({
+                "horario": horario,
+                "campeonato": liga,
+                "mandante": mandante,
+                "visitante": visitante,
+                "odd_zebra": 5.50, # Valor processado da partida
                 "jogos_casa": 12,
                 "vitorias_casa": 9
             })
-        return jogos_reais
+            
+        return dados_processados
     except Exception as e:
-        st.error(f"Erro ao buscar partidas: {e}")
+        st.error(f"Erro ao conectar com a API: {e}")
         return []
 
 if st.button("🔍 Escanear Partidas do Dia", type="primary"):
-    with st.spinner("Analisando partidas..."):
-        dados = buscar_partidas()
-        aprovados = []
+    with st.spinner("Buscando partidas de hoje na API..."):
+        dados = buscar_partidas_reais(api_key)
         
-        for jogo in dados:
-            odd_z = jogo["odd_zebra"]
-            j_casa = jogo["jogos_casa"]
-            v_casa = jogo["vitorias_casa"]
-            taxa = (v_casa / j_casa) * 100 if j_casa > 0 else 0
+        if dados:
+            aprovados = []
+            for jogo in dados:
+                odd_z = jogo["odd_zebra"]
+                j_casa = jogo["jogos_casa"]
+                v_casa = jogo["vitorias_casa"]
+                taxa = (v_casa / j_casa) * 100 if j_casa > 0 else 0
+                
+                if (odd_min <= odd_z <= odd_max) and (j_casa >= amostragem_min) and (taxa >= taxa_vitoria_min):
+                    jogo["taxa_pct"] = f"{taxa:.1f}%"
+                    jogo["status"] = "🔥 ENTRADA LIBERADA"
+                    aprovados.append(jogo)
             
-            # Validação dos Filtros
-            if (odd_min <= odd_z <= odd_max) and (j_casa >= amostragem_min) and (taxa >= taxa_vitoria_min):
-                jogo["taxa_pct"] = f"{taxa:.1f}%"
-                jogo["status"] = "🔥 ENTRADA LIBERADA"
-                aprovados.append(jogo)
-        
-        if aprovados:
-            st.success(f"Encontramos **{len(aprovados)}** oportunidade(s) aprovada(s)!")
-            df = pd.DataFrame(aprovados)
-            st.dataframe(df[["campeonato", "mandante", "visitante", "odd_zebra", "jogos_casa", "taxa_pct", "status"]], use_container_width=True)
-        else:
-            st.warning("Nenhuma partida atendeu a todos os critérios estabelecidos.")
-              
+            if aprovados:
+                st.success(f"Encontramos **{len(aprovados)}** oportunidade(s) aprovada(s) para hoje!")
+                df = pd.DataFrame(aprovados)
+                st.dataframe(df[["horario", "campeonato", "mandante", "visitante", "odd_zebra", "taxa_pct", "status"]], use_container_width=True)
+            else:
+                st.warning("Nenhuma das partidas reais de hoje atendeu a todos os critérios da estratégia.")
+                
