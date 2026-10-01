@@ -3,136 +3,80 @@ import requests
 import pandas as pd
 import datetime
 
-st.set_page_config(page_title="Dashboard Lay Zebra - H2H & Odds", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="Dashboard Lay Zebra - Odds Reais", page_icon="⚽", layout="wide")
 
-st.title("⚽ Dashboard Lay Zebra (H2H & Odds Completas)")
-st.markdown("Varredura em tempo real com **Odds das duas equipas, Empate e Retrospecto Direto (H2H)**.")
+st.title("⚽ Dashboard Lay Zebra (Odds Reais das Casas)")
+st.markdown("Varredura em tempo real conectada à **The-Odds-API** para obter odds de mercado precisas.")
 
-# Sidebar - Configurações
-st.sidebar.header("⚙️ Configurações & Filtros")
-api_key = st.sidebar.text_input("Sua Chave Football-Data.org", type="password")
-
-# Seletor de Período
-hoje = datetime.date.today()
-periodo = st.sidebar.date_input(
-    "📅 Escolha o Período",
-    value=(hoje, hoje + datetime.timedelta(days=2)),
-    format="DD/MM/YYYY"
-)
+st.sidebar.header("⚙️ Chaves & Configurações")
+odds_api_key = st.sidebar.text_input("Sua Chave The-Odds-API", type="password")
 
 st.sidebar.subheader("🎯 Parâmetros da Estratégia")
 odd_min = st.sidebar.number_input("Odd Mínima Zebra", value=4.00, step=0.10)
 odd_max = st.sidebar.number_input("Odd Máxima Zebra", value=8.00, step=0.10)
-amostragem_min = st.sidebar.number_input("Mínimo Jogos Casa", value=10, step=1)
-taxa_vitoria_min = st.sidebar.slider("% Vitória Mínima Casa", min_value=50, max_value=100, value=70)
 
-def buscar_partidas_completas(key, data_inicio_str, data_fim_str):
-    url = f"https://api.football-data.org/v4/matches?dateFrom={data_inicio_str}&dateTo={data_fim_str}"
-    headers = {"X-Auth-Token": key.strip()}
+def buscar_odds_reais(api_key):
+    # Busca odds de futebol (soccer_epl, soccer_spain_la_liga, soccer_germany_bundesliga, etc.)
+    url = f"https://api.the-odds-api.com/v4/sports/soccer_epl/odds/?apiKey={api_key.strip()}&regions=eu&markets=h2h"
     
     try:
-        response = requests.get(url, headers=headers, timeout=12)
+        response = requests.get(url, timeout=10)
         if response.status_code != 200:
-            return None, f"Erro HTTP {response.status_code}: {response.text}"
+            return None, f"Erro na API de Odds ({response.status_code}): {response.text}"
             
         dados = response.json()
-        matches = dados.get("matches", [])
+        jogos_odds = []
         
-        jogos_processados = []
-        for index, m in enumerate(matches):
-            campeonato = m.get("competition", {}).get("name", "N/A")
-            mandante = m.get("homeTeam", {}).get("name", "N/A")
-            visitante = m.get("awayTeam", {}).get("name", "N/A")
-            data_utc = m.get("utcDate", "")
+        for jogo in dados:
+            mandante = jogo.get("home_team", "N/A")
+            visitante = jogo.get("away_team", "N/A")
+            data_utc = jogo.get("commence_time", "")
             
-            data_formatada = "N/A"
-            horario_formatado = "N/A"
-            if data_utc:
-                dt = datetime.datetime.strptime(data_utc[:19], "%Y-%m-%d T%H:%M:%S".replace(" ", ""))
-                data_formatada = dt.strftime("%d/%m/%Y")
-                horario_formatado = dt.strftime("%H:%M")
-                
-            # Extração de Odds das duas equipas e empate
-            odds_data = m.get("odds", {})
-            odd_mandante = odds_data.get("homeWin", round(1.35 + (index % 4) * 0.12, 2))
-            odd_empate = odds_data.get("draw", round(3.80 + (index % 3) * 0.30, 2))
-            odd_visitante = odds_data.get("awayWin", round(4.50 + (index % 5) * 0.75, 2))
+            data_formatada = data_utc[:10] if data_utc else "N/A"
+            horario_formatado = data_utc[11:16] if data_utc else "N/A"
             
-            # Retrospecto dos últimos 5 confrontos diretos (H2H)
-            v_mandante_h2h = 3 + (index % 3)
-            empates_h2h = 1 + (index % 2)
-            v_visitante_h2h = 5 - (v_mandante_h2h + empates_h2h)
-            if v_visitante_h2h < 0:
-                v_visitante_h2h = 0
-                
-            resumo_h2h = f"{v_mandante_h2h}V Mandante | {empates_h2h}E | {v_visitante_h2h}V Visitante"
+            # Pega as odds do primeiro bookmaker disponível (ex: Pinnacle, Bet365)
+            bookmakers = jogo.get("bookmakers", [])
+            odd_m, odd_e, odd_v = "N/D", "N/D", "N/D"
             
-            # Amostragem da equipa em casa
-            jogos_casa = 10 + (index % 5)
-            vitorias_casa = 7 + (index % 3)
-            if vitorias_casa > jogos_casa:
-                vitorias_casa = jogos_casa
-                
-            jogos_processados.append({
+            if bookmakers:
+                markets = bookmakers[0].get("markets", [])
+                if markets:
+                    outcomes = markets[0].get("outcomes", [])
+                    for out in outcomes:
+                        if out["name"] == mandante:
+                            odd_m = out["price"]
+                        elif out["name"] == visitante:
+                            odd_v = out["price"]
+                        elif out["name"] == "Draw":
+                            odd_e = out["price"]
+            
+            jogos_odds.append({
                 "data": data_formatada,
                 "horario": horario_formatado,
-                "campeonato": campeonato,
                 "mandante": mandante,
                 "visitante": visitante,
-                "odd_mandante": float(odd_mandante),
-                "odd_empate": float(odd_empate),
-                "odd_zebra": float(odd_visitante),
-                "retrospecto_h2h": resumo_h2h,
-                "jogos_casa": jogos_casa,
-                "vitorias_casa": vitorias_casa
+                "odd_mandante": odd_m,
+                "odd_empate": odd_e,
+                "odd_zebra": odd_v
             })
             
-        return jogos_processados, None
+        return jogos_odds, None
     except Exception as e:
         return None, f"Falha na conexão: {e}"
 
-if isinstance(periodo, tuple) and len(periodo) == 2:
-    data_inicio, data_fim = periodo
-    inicio_str = data_inicio.strftime("%Y-%m-%d")
-    fim_str = data_fim.strftime("%Y-%m-%d")
-    inicio_exib = data_inicio.strftime("%d/%m/%Y")
-    fim_exib = data_fim.strftime("%d/%m/%Y")
-    
-    if st.button(f"🔍 Escanear Partidas com H2H ({inicio_exib} a {fim_exib})", type="primary"):
-        if not api_key:
-            st.error("❌ Digite a sua chave do Football-Data.org no menu lateral.")
-        else:
-            with st.spinner("Analisando odds completas e retrospecto H2H..."):
-                jogos, erro = buscar_partidas_completas(api_key, inicio_str, fim_str)
+if st.button("🔍 Escanear Odds Reais de Mercado", type="primary"):
+    if not odds_api_key:
+        st.error("❌ Digite a sua chave da The-Odds-API no menu lateral.")
+    else:
+        with st.spinner("Buscando cotações em tempo real nas casas de apostas..."):
+            jogos, erro = buscar_odds_reais(odds_api_key)
+            if erro:
+                st.error(f"⚠️ {erro}")
+            elif not jogos:
+                st.warning("Nenhuma partida com odds abertas encontrada no momento.")
+            else:
+                st.success(f"Encontradas {len(jogos)} partidas com odds de mercado reais!")
+                df = pd.DataFrame(jogos)
+                st.dataframe(df, use_container_width=True)
                 
-                if erro:
-                    st.error(f"⚠️ {erro}")
-                elif not jogos:
-                    st.warning("Nenhuma partida encontrada no período selecionado.")
-                else:
-                    aprovados = []
-                    for jogo in jogos:
-                        odd_z = jogo["odd_zebra"]
-                        j_casa = jogo["jogos_casa"]
-                        v_casa = jogo["vitorias_casa"]
-                        taxa = (v_casa / j_casa) * 100 if j_casa > 0 else 0
-                        
-                        if (odd_min <= odd_z <= odd_max) and (j_casa >= amostragem_min) and (taxa >= taxa_vitoria_min):
-                            jogo["taxa_pct"] = f"{taxa:.1f}%"
-                            jogo["status"] = "🔥 ENTRADA LIBERADA"
-                            aprovados.append(jogo)
-                    
-                    if aprovados:
-                        st.subheader(f"🔥 Oportunidades Aprovadas ({len(aprovados)})")
-                        df = pd.DataFrame(aprovados)
-                        colunas_exibir = [
-                            "data", "horario", "campeonato", "mandante", "visitante", 
-                            "odd_mandante", "odd_empate", "odd_zebra", 
-                            "taxa_pct", "retrospecto_h2h", "status"
-                        ]
-                        st.dataframe(df[colunas_exibir], use_container_width=True)
-                    else:
-                        st.info("Nenhuma das partidas encontradas atendeu a todos os requisitos da estratégia.")
-else:
-    st.info("💡 Por favor, selecione a data inicial e a data final no calendário lateral.")
-    
