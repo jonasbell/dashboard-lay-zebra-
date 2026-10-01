@@ -1,15 +1,23 @@
 import streamlit as st
 import requests
 import pandas as pd
+import datetime
 
 st.set_page_config(page_title="Dashboard Lay Zebra", page_icon="⚽", layout="wide")
 
-st.title("⚽ Dashboard Lay Zebra (Jogos Reais)")
-st.markdown("Varredura em tempo real de partidas com foco na estratégia **Lay Zebra**.")
+st.title("⚽ Dashboard Lay Zebra (Por Data)")
+st.markdown("Varredura em tempo real de partidas por data com foco na estratégia **Lay Zebra**.")
 
 # Sidebar - Parâmetros
 st.sidebar.header("⚙️ Configurações & Filtros")
 api_key = st.sidebar.text_input("Sua Chave API-Football (RapidAPI)", type="password")
+
+# Seletor de Data Interativo
+data_selecionada = st.sidebar.date_input(
+    "📅 Escolha a Data dos Jogos",
+    value=datetime.date.today(),
+    format="DD/MM/YYYY"
+)
 
 st.sidebar.subheader("🎯 Parâmetros da Estratégia")
 odd_min = st.sidebar.number_input("Odd Mínima Zebra", value=4.00, step=0.10)
@@ -17,13 +25,13 @@ odd_max = st.sidebar.number_input("Odd Máxima Zebra", value=8.00, step=0.10)
 amostragem_min = st.sidebar.number_input("Mínimo Jogos Casa", value=10, step=1)
 taxa_vitoria_min = st.sidebar.slider("% Vitória Mínima Casa", min_value=50, max_value=100, value=70)
 
-def buscar_partidas_reais(key):
+def buscar_partidas_por_data(key, data_str):
     if not key:
-        st.error("❌ Digite sua chave da API-Football no menu lateral para carregar os jogos reais do dia.")
+        st.error("❌ Digite sua chave da API-Football no menu lateral para carregar os jogos.")
         return []
     
-    # Busca estritamente os jogos programados para a data de HOJE
-    url = "https://api-football-v1.p.rapidapi.com/v3/fixtures?date=today"
+    # Consulta a API filtrando estritamente pela data selecionada (YYYY-MM-DD)
+    url = f"https://api-football-v1.p.rapidapi.com/v3/fixtures?date={data_str}"
     headers = {
         "x-rapidapi-key": key,
         "x-rapidapi-host": "api-football-v1.p.rapidapi.com"
@@ -34,7 +42,7 @@ def buscar_partidas_reais(key):
         jogos_reais = response.get("response", [])
         
         if not jogos_reais:
-            st.info("Nenhuma partida encontrada para a data de hoje na API.")
+            st.info(f"Nenhuma partida encontrada para a data selecionada ({data_str}).")
             return []
             
         dados_processados = []
@@ -49,7 +57,7 @@ def buscar_partidas_reais(key):
                 "campeonato": liga,
                 "mandante": mandante,
                 "visitante": visitante,
-                "odd_zebra": 5.50, # Valor processado da partida
+                "odd_zebra": 5.50, 
                 "jogos_casa": 12,
                 "vitorias_casa": 9
             })
@@ -59,9 +67,12 @@ def buscar_partidas_reais(key):
         st.error(f"Erro ao conectar com a API: {e}")
         return []
 
-if st.button("🔍 Escanear Partidas do Dia", type="primary"):
-    with st.spinner("Buscando partidas de hoje na API..."):
-        dados = buscar_partidas_reais(api_key)
+data_api = data_selecionada.strftime("%Y-%m-%d")
+data_exibicao = data_selecionada.strftime("%d/%m/%Y")
+
+if st.button(f"🔍 Escanear Partidas de {data_exibicao}", type="primary"):
+    with st.spinner(f"Buscando partidas de {data_exibicao} na API..."):
+        dados = buscar_partidas_por_data(api_key, data_api)
         
         if dados:
             aprovados = []
@@ -77,9 +88,9 @@ if st.button("🔍 Escanear Partidas do Dia", type="primary"):
                     aprovados.append(jogo)
             
             if aprovados:
-                st.success(f"Encontramos **{len(aprovados)}** oportunidade(s) aprovada(s) para hoje!")
+                st.success(f"Encontramos **{len(aprovados)}** oportunidade(s) aprovada(s) para {data_exibicao}!")
                 df = pd.DataFrame(aprovados)
                 st.dataframe(df[["horario", "campeonato", "mandante", "visitante", "odd_zebra", "taxa_pct", "status"]], use_container_width=True)
             else:
-                st.warning("Nenhuma das partidas reais de hoje atendeu a todos os critérios da estratégia.")
-                
+                st.warning(f"Nenhuma das partidas de {data_exibicao} atendeu a todos os critérios da estratégia.")
+        
